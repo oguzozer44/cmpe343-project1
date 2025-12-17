@@ -252,6 +252,7 @@ def main():
 
 
     print("FEATURE INTERACTION: Genre × Explicit (Top Genres)\n")
+    print("\n")
 
     rows = []
     for happy in ["happy", "not_happy"]:
@@ -269,7 +270,9 @@ def main():
             })
 
     happy_party_df = pd.DataFrame(rows)
+    print("Happy - Party Interaction Probabilities:")
     print(happy_party_df)
+    print("-" * 50)
 
     rows = []
     for sad in ["sad", "not_sad"]:
@@ -287,8 +290,9 @@ def main():
             })
 
     sad_acoustic_df = pd.DataFrame(rows)
+    print("Sad - Acoustic Interaction Probabilities:")
     print(sad_acoustic_df)
-
+    print("-" * 50)
 
     top_genres = df["ab_genre_rosamerica_value"].value_counts().head(8).index
 
@@ -308,8 +312,9 @@ def main():
             })
 
     genre_explicit_df = pd.DataFrame(rows)
+    print("Genre - Explicit Interaction Probabilities:")
     print(genre_explicit_df)
-
+    print("-" * 50)
 
     rows = []
     for g in top_genres:
@@ -327,8 +332,9 @@ def main():
             })
 
     voice_genre_df = pd.DataFrame(rows)
+    print("Genre - Voice/Instrumental Interaction Probabilities:")
     print(voice_genre_df)
-
+    print("-" * 50)
 
     rows = []
     for g in ["male", "female"]:
@@ -346,25 +352,37 @@ def main():
             })
 
     gender_happy_df = pd.DataFrame(rows)
+    print("Gender - Happy Interaction Probabilities:")
     print(gender_happy_df)
+    print("-" * 50)
 
     P_5_global = compute_global_five_star_prob(df)
     print("P(5★) =", P_5_global)
+    print("-" * 50)
 
+    print("BAYESIAN POSTERIORS:\n")
     artist_bayes = compute_bayes_posterior(df, "primary_artist_name")
+    print("Bayesian Posterior for Artists:")
     print(artist_bayes.head(10))
+    print("-" * 50)
 
     happy_bayes = compute_bayes_posterior(df, "ab_mood_happy_value")
+    print("Bayesian Posterior for Happy Mood:")
     print(happy_bayes)
+    print("-" * 50)
 
     timbre_bayes = compute_bayes_posterior(df, "ab_timbre_value")
+    print("Bayesian Posterior for Timbre:")
     print(timbre_bayes)
+    print("-" * 50)
 
     ratings = pd.read_csv("./data/ratings.csv")
     MY_USER_ID = ratings["user_id"].iloc[0]  # güvenli default
     df_my = df[df["user_id"] == MY_USER_ID]
     sample_users = ratings["user_id"].unique()[:5]
     dfs = [df[df["user_id"] == u] for u in sample_users]
+
+    print("PERSONAL vs GLOBAL vs GROUP COMPARISONS\n")
 
     comparison_explicit = personal_global_group_comparison(
         df_global=df,
@@ -374,29 +392,36 @@ def main():
         alpha=1
     )
 
+    print("Explicit Content Comparison:")
     print(comparison_explicit)
+    print("-" * 50)
 
     comparison_year = personal_global_group_comparison(
         df, df_my, dfs, "year_bucket", alpha=1
     )
 
+    print("Release Year Bucket Comparison:")
     print(comparison_year)
+    print("-" * 50)
 
     comparison_popularity = personal_global_group_comparison(
         df, df_my, dfs, "popularity_bucket", alpha=1
     )
 
+    print("Popularity Bucket Comparison:")
     print(comparison_popularity)
+    print("-" * 50)
 
     comparison_happy = personal_global_group_comparison(
         df, df_my, dfs, "ab_mood_happy_value", alpha=1
     )
 
+    print("Happy Mood Comparison:")
     print(comparison_happy)
+    print("-" * 50)
 
+    print("\n")
     print("Part 1 completed.")
-
-
 
 if __name__ == "__main__":
     main()
