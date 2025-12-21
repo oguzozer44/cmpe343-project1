@@ -216,45 +216,130 @@ def build_fake_profile(history):
     return profile
 
 
-def run_monte_carlo(model, n_trials=1000):
-    hits, avgs, Tus = [], [], []
+def run_monte_carlo(model, n_trials=1000, k=5, max_rounds=20, seed=42):
+    """
+    Runs Monte Carlo simulations and RETURNS PER-TRIAL ARRAYS (needed for CI).
 
-    for _ in range(n_trials):
-        hit, avg, Tu = simulate_session(model=model)
-        hits.append(hit)
-        avgs.append(avg)
-        if Tu is not None:
-            Tus.append(Tu)
+    We also handle sessions with no 5★:
+      - Instead of discarding T_u (which biases mean downward),
+        we set T_u = max_rounds + 1 (censored as "didn't happen within limit").
+    """
+    rng = np.random.default_rng(seed)
 
-    return (
-        np.mean(hits),
-        np.mean(avgs),
-        np.mean(Tus)
-    )
+    hits = np.zeros(n_trials, dtype=float)     # Hit@k is 0/1 per trial
+    avgs = np.zeros(n_trials, dtype=float)     # average rating over first k
+    tus  = np.zeros(n_trials, dtype=float)     # time-to-5★ per trial (censored)
+
+    for i in range(n_trials):
+        # Optional: vary randomness per trial while keeping reproducibility
+        # (your simulate_session uses np.random currently; this still helps a bit)
+        np.random.seed(rng.integers(0, 2**32 - 1))
+
+        hit, avg, Tu = simulate_session(model=model, k=k, max_rounds=max_rounds)
+
+        hits[i] = hit
+        avgs[i] = avg
+        tus[i]  = Tu if Tu is not None else (max_rounds + 1)
+
+    return hits, avgs, tus
 
 
-def bootstrap_ci(data, n_boot=1000, alpha=0.05):
-    means = []
-    for _ in range(n_boot):
-        sample = np.random.choice(data, size=len(data), replace=True)
-        means.append(np.mean(sample))
+def bootstrap_ci_mean(data, n_boot=2000, alpha=0.05, seed=123):
+    """
+    Percentile bootstrap CI for the MEAN of a 1D array.
+    Returns: (mean_hat, ci_low, ci_high)
+    """
+    rng = np.random.default_rng(seed)
+    data = np.asarray(data, dtype=float)
 
-    lower = np.percentile(means, 100 * alpha / 2)
-    upper = np.percentile(means, 100 * (1 - alpha / 2))
-    return lower, upper
+    boot_means = np.empty(n_boot, dtype=float)
+    n = len(data)
+
+    for b in range(n_boot):
+        sample = rng.choice(data, size=n, replace=True)
+        boot_means[b] = np.mean(sample)
+
+    mean_hat = float(np.mean(data))
+    lo = float(np.percentile(boot_means, 100 * (alpha / 2)))
+    hi = float(np.percentile(boot_means, 100 * (1 - alpha / 2)))
+    return mean_hat, lo, hi
+
+
+def bootstrap_ci_diff(data_A, data_B, n_boot=2000, alpha=0.05, seed=999):
+    """
+    Bootstrap CI for the DIFFERENCE in means: mean(A) - mean(B)
+    by resampling A and B independently.
+    Returns: (diff_hat, ci_low, ci_high)
+    """
+    rng = np.random.default_rng(seed)
+    A = np.asarray(data_A, dtype=float)
+    B = np.asarray(data_B, dtype=float)
+
+    nA, nB = len(A), len(B)
+    boot_diffs = np.empty(n_boot, dtype=float)
+
+    for b in range(n_boot):
+        As = rng.choice(A, size=nA, replace=True)
+        Bs = rng.choice(B, size=nB, replace=True)
+        boot_diffs[b] = np.mean(As) - np.mean(Bs)
+
+    diff_hat = float(np.mean(A) - np.mean(B))
+    lo = float(np.percentile(boot_diffs, 100 * (alpha / 2)))
+    hi = float(np.percentile(boot_diffs, 100 * (1 - alpha / 2)))
+    return diff_hat, lo, hi
 
 
 def main():
     N_TRIALS = 1000
+    K = 5
+    MAX_ROUNDS = 20
+    ALPHA = 0.05          # 95% CI
+    N_BOOT = 2000
 
     print("Running Monte Carlo simulations...")
 
-    A_hit, A_avg, A_Tu = run_monte_carlo("A", N_TRIALS)
-    B_hit, B_avg, B_Tu = run_monte_carlo("B", N_TRIALS)
+    # --- Run simulations (per-trial arrays) ---
+    A_hits, A_avgs, A_tus = run_monte_carlo("A", n_trials=N_TRIALS, k=K, max_rounds=MAX_ROUNDS, seed=42)
+    B_hits, B_avgs, B_tus = run_monte_carlo("B", n_trials=N_TRIALS, k=K, max_rounds=MAX_ROUNDS, seed=2025)
 
-    print("\n=== RESULTS ===")
-    print(f"Model A – Hit@5: {A_hit:.3f}, AvgRating: {A_avg:.2f}, T_u: {A_Tu:.2f}")
-    print(f"Model B – Hit@5: {B_hit:.3f}, AvgRating: {B_avg:.2f}, T_u: {B_Tu:.2f}")
+    # --- CIs for each model metric mean ---
+    A_hit_hat, A_hit_lo, A_hit_hi = bootstrap_ci_mean(A_hits, n_boot=N_BOOT, alpha=ALPHA, seed=1)
+    B_hit_hat, B_hit_lo, B_hit_hi = bootstrap_ci_mean(B_hits, n_boot=N_BOOT, alpha=ALPHA, seed=2)
+
+    A_avg_hat, A_avg_lo, A_avg_hi = bootstrap_ci_mean(A_avgs, n_boot=N_BOOT, alpha=ALPHA, seed=3)
+    B_avg_hat, B_avg_lo, B_avg_hi = bootstrap_ci_mean(B_avgs, n_boot=N_BOOT, alpha=ALPHA, seed=4)
+
+    A_tu_hat, A_tu_lo, A_tu_hi = bootstrap_ci_mean(A_tus, n_boot=N_BOOT, alpha=ALPHA, seed=5)
+    B_tu_hat, B_tu_lo, B_tu_hi = bootstrap_ci_mean(B_tus, n_boot=N_BOOT, alpha=ALPHA, seed=6)
+
+    # --- CI for DIFFERENCE (A - B) as requested in spec ---
+    d_hit, d_hit_lo, d_hit_hi = bootstrap_ci_diff(A_hits, B_hits, n_boot=N_BOOT, alpha=ALPHA, seed=11)
+    d_avg, d_avg_lo, d_avg_hi = bootstrap_ci_diff(A_avgs, B_avgs, n_boot=N_BOOT, alpha=ALPHA, seed=12)
+    d_tu,  d_tu_lo,  d_tu_hi  = bootstrap_ci_diff(A_tus,  B_tus,  n_boot=N_BOOT, alpha=ALPHA, seed=13)
+
+    print("\n=== RESULTS (Point Estimate ± 95% CI) ===")
+    print(f"Model A – Hit@{K}: {A_hit_hat:.3f}  [{A_hit_lo:.3f}, {A_hit_hi:.3f}]"
+          f" | AvgRating: {A_avg_hat:.2f}  [{A_avg_lo:.2f}, {A_avg_hi:.2f}]"
+          f" | T_u: {A_tu_hat:.2f}  [{A_tu_lo:.2f}, {A_tu_hi:.2f}]")
+
+    print(f"Model B – Hit@{K}: {B_hit_hat:.3f}  [{B_hit_lo:.3f}, {B_hit_hi:.3f}]"
+          f" | AvgRating: {B_avg_hat:.2f}  [{B_avg_lo:.2f}, {B_avg_hi:.2f}]"
+          f" | T_u: {B_tu_hat:.2f}  [{B_tu_lo:.2f}, {B_tu_hi:.2f}]")
+
+    print("\n=== DIFFERENCE (Model A - Model B) with 95% CI ===")
+    print(f"Δ Hit@{K}: {d_hit:.3f}  [{d_hit_lo:.3f}, {d_hit_hi:.3f}]")
+    print(f"Δ AvgRating: {d_avg:.3f}  [{d_avg_lo:.3f}, {d_avg_hi:.3f}]")
+    print(f"Δ T_u: {d_tu:.3f}  [{d_tu_lo:.3f}, {d_tu_hi:.3f}]  (negative means A is faster)")
+
+    # Quick “significance” read:
+    print("\n=== INTERPRETATION (CI contains 0?) ===")
+    print(f"Hit@{K}: ", "Significant" if (d_hit_lo > 0 or d_hit_hi < 0) else "Not significant")
+    print("AvgRating:", "Significant" if (d_avg_lo > 0 or d_avg_hi < 0) else "Not significant")
+    print("T_u:     ", "Significant" if (d_tu_lo > 0 or d_tu_hi < 0) else "Not significant")
+
+    print("\nNOTE: For T_u, sessions with no 5★ within max rounds are treated as T_u = max_rounds + 1 (censoring).")
+    print("PART 4 COMPLETED SUCCESSFULLY.")
+
 
 if __name__ == "__main__":
     main()
